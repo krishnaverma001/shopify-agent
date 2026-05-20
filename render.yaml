@@ -29,7 +29,3 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
-    disks:
-      - name: chat_sessions
-        mountPath: /opt/render/project/src/chat_sessions
-        sizeGB: 1
