@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     ORDERS_CSV: Path = DATA_DIR / "orders.csv"
 
     DATABASE_URL: str = "data/shopify.db"
-    VECTOR_DB_URL: str = ""
-    REDIS_URL: str = "redis://localhost:6379/0"
     
     SHOPIFY_STORE_DOMAIN: str = ""
     SHOPIFY_API_KEY: str = ""
