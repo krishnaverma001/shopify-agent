@@ -1,8 +1,9 @@
-import hashlib
-
 import pandas as pd
 from typing import List, Dict
 from app.data.processors.data_cleaner import DataCleaner
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 class ReviewLoader:
     """Load and parse review data from CSV"""
@@ -12,7 +13,7 @@ class ReviewLoader:
     
     def load_reviews(self, csv_path: str) -> List[Dict]:
         """Load reviews from CSV file"""
-        print("Loading reviews from CSV...")
+        logger.info("Loading reviews from CSV")
         
         df = pd.read_csv(csv_path)
         reviews = []
@@ -21,7 +22,7 @@ class ReviewLoader:
             review = self._create_review_record(row)
             reviews.append(review)
         
-        print(f"Loaded {len(reviews)} reviews")
+        logger.info(f"Loaded {len(reviews)} reviews")
         return reviews
     
     def _create_review_record(self, row: Dict) -> Dict:

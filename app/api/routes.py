@@ -1,7 +1,3 @@
-"""
-routes.py — Chat routes with full session persistence.
-"""
-
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Tuple
 import traceback
@@ -9,11 +5,13 @@ import uuid
 from datetime import datetime
 
 from app.agents.runner import ChatRunner
+from app.logging import get_logger
 from .models import ChatRequest, ChatResponse
 from .auth import get_current_user
 from app.config import settings
 import asyncio
 
+logger = get_logger(__name__)
 
 router = APIRouter()
 

@@ -4,6 +4,9 @@ from groq import Groq
 from app.config import settings
 from app.agents.state import ConversationState
 from langchain_core.messages import AIMessage
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 _CLIENT = None
 _HTTP_CLIENT = None
@@ -71,20 +74,27 @@ def responder_node(state: ConversationState) -> ConversationState:
 
     try:
         response = _get_client().chat.completions.create(
-            model="llama-3.3-70b-versatile",   # better for natural language
+            # model="llama-3.3-70b-versatile",   # better for natural language
+            model = "llama-3.1-8b-instant",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload)},
+                {
+                    "role": "system", 
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user", 
+                    "content": json.dumps(payload)
+                },
             ],
             temperature=0.5,
             max_tokens=350,
         )
         text = response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[Responder] LLM error: {e}")
+        logger.error(f"LLM error: {e}")
         text = _fallback_response(results, relaxation_log)
 
-    print(f"[Responder] Generated response ({len(text)} chars)")
+    logger.info(f"Generated response ({len(text)} chars)")
 
     return {
         **state,
@@ -95,24 +105,24 @@ def responder_node(state: ConversationState) -> ConversationState:
     }
 
 
-# responder.py - ADD to _fallback_response
 def _fallback_response(results: list, relaxation_log: list) -> str:
     if not results:
         return "I couldn't find any matching products. Could you try a different search?"
     
-    # ADD: Guard for missing min_price
+    # Guard for missing min_price
     lines = []
     if relaxation_log:
         lines.append(f"Note: {relaxation_log[-1]}.")
+    
     lines.append(f"Here are {len(results)} product(s) I found:")
+    
     for r in results[:5]:
-        # FIX: Handle missing min_price key
+        # Handle missing min_price key
         price = f"${r.get('min_price', 0):.2f}" if r.get('min_price') else "N/A"
         rating = f" | ⭐{r.get('avg_rating', 0)}" if r.get('avg_rating') else ""
         lines.append(f"• {r.get('title', 'Unknown')} — {price}{rating}")
+    
     return "\n".join(lines)
-
-# responder.py - add this new function
 
 def no_results_node(state: ConversationState) -> ConversationState:
     """Handle case when no products exist for the user's search."""
@@ -121,8 +131,12 @@ def no_results_node(state: ConversationState) -> ConversationState:
     relaxation_log = state.get("relaxation_log", [])
     
     # Create a helpful fallback message
-    text = f"I couldn't find any products matching '{raw_query}' in our catalog. "
-    text += "Would you like to try a different search?\n"
+    if relaxation_log:
+        text = f"I still couldn't find any products matching '{raw_query}' in our catalog. "
+    else:
+        text = f"I couldn't find any products matching '{raw_query}' in our catalog. "
+
+    text += "Would you like to try a different search, or reset to start over?"
 
     # Reset state to allow new searches
     return {

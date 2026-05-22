@@ -1,12 +1,12 @@
 from dataclasses import dataclass, field
 from typing import Optional, List
-from enum import Enum
+# from enum import Enum
 
-class Intent(str, Enum):
-    SEARCH = "search"
-    COMPARE = "compare"
-    DETAILS = "details"
-    SIMILAR = "similar"
+# class Intent(str, Enum):
+#     SEARCH = "search"
+#     COMPARE = "compare"
+#     DETAILS = "details"
+#     SIMILAR = "similar"
 
 @dataclass
 class ParsedQuery:
@@ -19,12 +19,12 @@ class ParsedQuery:
     normalized_query: str = ""
     
     # Core
-    intent: Intent = Intent.SEARCH
+    # intent: Intent = Intent.SEARCH
     retrieval_query: str = ""  # For retrieval (filters removed)
     
     # Filters
     brand: Optional[str] = None
-    category: Optional[str] = None
+    # category: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     min_rating: Optional[float] = None

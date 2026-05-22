@@ -1,6 +1,10 @@
 from typing import List, Dict
 from supabase import Client
 
+from app.logging import get_logger
+
+logger = get_logger(__name__)
+
 def keyword_search(
     supabase: Client, 
     query_text: str
@@ -35,7 +39,7 @@ def keyword_search(
         return results
         
     except Exception as e:
-        print(f"Keyword search error: {e}, falling back to simple search")
+        logger.error(f"Keyword search error: {e}, falling back to simple search")
         return _fallback_keyword_search(supabase, query_text)
 
 def _fallback_keyword_search(

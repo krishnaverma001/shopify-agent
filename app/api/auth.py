@@ -1,6 +1,5 @@
 """
-auth.py — Simple username-based JWT auth for ShopBot MVP.
-
+Simple username-based JWT auth for ShopBot MVP.
 No email, no password complexity requirements.
 Users are created on first login (username + password).
 Tokens are signed HS256 JWTs; secret lives in settings.SECRET_KEY.
@@ -15,9 +14,11 @@ import base64
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from .models import AuthRequest, AuthResponse
+from app.logging import get_logger
 
-# ── Try to import jose; fall back to a pure-python implementation ──
+logger = get_logger(__name__)
+
 try:
     from jose import jwt, JWTError
     USE_JOSE = True
@@ -38,7 +39,7 @@ ALGORITHM = "HS256"
 SECRET = getattr(settings, "SECRET_KEY", "shopbot-dev-secret")
 
 
-# ── Password hashing (SHA-256 + HMAC, no bcrypt dep needed for MVP) ─
+# Password hashing (SHA-256 + HMAC, no bcrypt dep needed for MVP) 
 def _hash_password(password: str) -> str:
     return hmac.new(
         SECRET.encode(),
@@ -51,7 +52,7 @@ def _verify_password(password: str, hashed: str) -> bool:
     return hmac.compare_digest(_hash_password(password), hashed)
 
 
-# ── JWT helpers ──────────────────────────────────────────────────────
+# JWT helpers 
 def _create_token(username: str) -> str:
     payload = {
         "sub": username,
@@ -60,8 +61,9 @@ def _create_token(username: str) -> str:
     }
     if USE_JOSE:
         return jwt.encode(payload, SECRET, algorithm=ALGORITHM)
-    # Pure-python fallback (good enough for MVP)
-    return _pure_encode(payload)
+    
+    
+    return _pure_encode(payload)    # Fallback
 
 
 def _decode_token(token: str) -> Optional[str]:
@@ -76,10 +78,13 @@ def _decode_token(token: str) -> Optional[str]:
             return None
         return payload.get("sub")
     except Exception:
+        logger.info(
+            "Token decode failed"
+        )
         return None
 
 
-# ── Pure-python JWT (HS256) fallback ─────────────────────────────────
+# Pure-python JWT (HS256) fallback 
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -108,7 +113,7 @@ def _pure_decode(token: str) -> dict:
     return json.loads(_b64url_decode(body))
 
 
-# ── Dependency: get current user from Bearer token ───────────────────
+# Dependency: get current user from Bearer token 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> str:
@@ -127,19 +132,7 @@ def get_current_user_optional(
         return None
     return _decode_token(credentials.credentials)
 
-
-# ── Pydantic models ──────────────────────────────────────────────────
-class AuthRequest(BaseModel):
-    username: str
-    password: str
-
-class AuthResponse(BaseModel):
-    token: str
-    username: str
-    created: bool   # True if account was just created
-
-
-# ── Routes ───────────────────────────────────────────────────────────
+# Routes
 @router.post("/auth/login", response_model=AuthResponse)
 async def login_or_register(req: AuthRequest):
     """
@@ -159,11 +152,25 @@ async def login_or_register(req: AuthRequest):
 
     created = False
     if username in _users:
+        logger.info(
+            f"Login attempt user={username}"
+        )
+
         # Login flow
-        if not _verify_password(password, _users[username]["password_hash"]):
-            raise HTTPException(status_code=401, detail="Incorrect password")
+        if not _verify_password(
+            password, 
+            _users[username]["password_hash"]
+        ):
+            raise HTTPException(
+                status_code=401, 
+                detail="Incorrect password"
+            )
     else:
         # Register flow
+
+        logger.info(
+            f"Registering user={username}"
+        )
         _users[username] = {
             "password_hash": _hash_password(password),
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -171,6 +178,9 @@ async def login_or_register(req: AuthRequest):
         created = True
 
     token = _create_token(username)
+    logger.info(
+        f"Authenticated user={username}"
+    )
     return AuthResponse(token=token, username=username, created=created)
 
 

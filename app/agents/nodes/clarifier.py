@@ -4,6 +4,9 @@ from groq import Groq
 from app.config import settings
 from app.agents.state import ConversationState
 from langchain_core.messages import AIMessage
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 _CLIENT = None
 _HTTP_CLIENT = None
@@ -83,22 +86,39 @@ def clarifier_node(state: ConversationState) -> ConversationState:
             max_tokens=80,
         )
         question = response.choices[0].message.content.strip()
+
     except Exception as e:
-        print(f"[Clarifier] LLM error: {e}")
+        logger.error(f"LLM error: {e}")
         question = "Could you tell me a bit more about what you're looking for?"
 
-    print(f"[Clarifier] Question: {question}")
+    logger.info(f"Question: {question}")
 
     # Store this so when user responds, we know which filter to apply
     clarifying_feature = None
     question_lower = question.lower()
-    if any(word in question_lower for word in ["price", "budget", "cost", "dollar", "$"]):
+
+    if any(
+        word in question_lower 
+        for word in ["price", "budget", "cost", "dollar", "$"]
+    ):
         clarifying_feature = "price"
-    elif any(word in question_lower for word in ["brand", "maker", "company", "manufacturer"]):
+    
+    elif any(
+        word in question_lower 
+        for word in ["brand", "maker", "company", "manufacturer"]
+    ):
         clarifying_feature = "brand"
-    elif any(word in question_lower for word in ["rating", "review", "star", "score"]):
+    
+    elif any(
+        word in question_lower 
+        for word in ["rating", "review", "star", "score"]
+    ):
         clarifying_feature = "rating"
-    elif any(word in question_lower for word in ["type", "category", "kind", "style"]):
+    
+    elif any(
+        word in question_lower 
+        for word in ["type", "category", "kind", "style"]
+    ):
         clarifying_feature = "category"
 
     return {

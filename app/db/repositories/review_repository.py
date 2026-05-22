@@ -1,6 +1,9 @@
 from typing import List, Dict
 from app.db.supabase_client import SupabaseClient
 from app.embeddings.models import ReviewEmbeddingPayload
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 class ReviewRepository:
     """Handle all review-related database operations"""
@@ -16,7 +19,7 @@ class ReviewRepository:
         if not reviews:
             return
         
-        print(f"Inserting {len(reviews)} reviews...")
+        logger.info(f"Inserting {len(reviews)} reviews")
         
         batch_size = 100
         for i in range(0, len(reviews), batch_size):
@@ -26,7 +29,7 @@ class ReviewRepository:
                 on_conflict="review_id"
             ).execute()
         
-        print(f"Reviews stored successfully")
+        logger.info(f"Reviews stored successfully")
     
     def upsert_review_embeddings(self, payloads: List[ReviewEmbeddingPayload]) -> None:
         """
@@ -36,7 +39,7 @@ class ReviewRepository:
         if not payloads:
             return
         
-        print(f"Storing {len(payloads)} review embeddings...")
+        logger.info(f"Storing {len(payloads)} review embeddings...")
         
         # Convert payloads to dicts for insertion
         payload_dicts = [p.to_dict() for p in payloads]
@@ -49,7 +52,7 @@ class ReviewRepository:
                 on_conflict="review_id"
             ).execute()
         
-        print(f"Review embeddings stored successfully")
+        logger.info(f"Review embeddings stored successfully")
     
     def get_all_reviews(self) -> List[Dict]:
         """Fetch all reviews for embedding regeneration"""

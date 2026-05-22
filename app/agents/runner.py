@@ -1,17 +1,23 @@
-"""
-runner.py — Stateful chat runner with full payload persistence.
-"""
-
-from __future__ import annotations
 import json
 import os
+import tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage
+
 from app.agents.graph import get_graph
 from app.agents.state import ConversationState
+from app.logging import get_logger
 
+logger = get_logger(__name__)
+
+# Detect if running on Hugging Face Spaces
+if os.environ.get("SPACE_ID") or os.environ.get("HF_SPACE_ID"):
+    SESSION_DIR = os.path.join(tempfile.gettempdir(), "chat_sessions")
+    logger.info(f"Running on Hugging Face Spaces, using {SESSION_DIR}")
+else:
+    SESSION_DIR = Path("chat_sessions")
 
 _CARD_FIELDS = (
     "product_handle",
@@ -58,12 +64,23 @@ def _empty_state() -> ConversationState:
         "awaiting_user_response": False,
         "next_action": "new_search",
         "response_payload": None,
-        "conversation_history": [],  # Store serialized conversation with payloads
+        "conversation_history": [],  # Serialized conversation with payloads
     }
 
 
+def _slim_card(r: dict) -> dict:
+    return {
+        k: r.get(k) 
+        for k in _CARD_FIELDS
+    }
+
 class ChatRunner:
     def __init__(self, session_id: Optional[str] = None, username: Optional[str] = None):
+        
+        logger.info(
+            f"Initializing ChatRunner with Session = {session_id}"
+        )
+
         self.graph = get_graph()
         self.session_id = session_id
         self.username = username
@@ -73,7 +90,7 @@ class ChatRunner:
             self._load_state()
     
     def _get_state_path(self) -> Path:
-        return SESSION_DIR / f"{self.username}_{self.session_id}.json"
+        return Path(SESSION_DIR) / f"{self.username}_{self.session_id}.json"
     
     def _save_state(self):
         if not self.session_id or not self.username:
@@ -100,8 +117,13 @@ class ChatRunner:
         try:
             with open(path, 'w') as f:
                 json.dump(serializable, f, indent=2)
+                
+            logger.info(
+                f"State saved Session = {self.session_id}"
+            )
+
         except Exception as e:
-            print(f"[Runner] Error saving state: {e}")
+            logger.error(f"Error saving state: {e}")
     
     def _load_state(self):
         path = self._get_state_path()
@@ -118,83 +140,25 @@ class ChatRunner:
                     self.state[key] = value
             
             # Restore messages from conversation_history
-            messages = []
+            user_message = []
             for item in self.state.get("conversation_history", []):
                 if item["role"] == "user":
-                    messages.append(HumanMessage(content=item["content"]))
+                    user_message.append(HumanMessage(content=item["content"]))
                 else:
-                    msg = AIMessage(content=item["content"])
+                    agent_message = AIMessage(content=item["content"])
                     if item.get("payload"):
-                        msg.additional_kwargs = {"response_payload": item["payload"]}
-                    messages.append(msg)
+                        agent_message.additional_kwargs = {"response_payload": item["payload"]}
+
+                    user_message.append(agent_message)
             
-            self.state["messages"] = messages
-            print(f"[Runner] Loaded session {self.session_id} with {len(messages)} messages")
+            self.state["messages"] = user_message
+            logger.info(f"Loaded session {self.session_id} with {len(user_message)} messages")
         except Exception as e:
-            print(f"[Runner] Error loading state: {e}")
-    
-    def chat(self, user_message: str) -> dict:
-        # Add user message to history
-        self.state["conversation_history"].append({
-            "role": "user",
-            "content": user_message,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        self.state = {
-            **self.state,
-            "messages": self.state["messages"] + [HumanMessage(content=user_message)],
-            "turn_count": self.state["turn_count"] + 1,
-        }
-        
-        self._save_state()
-        
-        result = self.graph.invoke(self.state.copy())
-        self.state = result
-        
-        payload = self._build_payload()
-        self.state = {**self.state, "response_payload": payload}
-        
-        # Store assistant message with payload
-        assistant_content = self._get_last_assistant_message()
-        self.state["conversation_history"].append({
-            "role": "assistant",
-            "content": assistant_content,
-            "payload": payload,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        self._save_state()
-        return payload
+            logger.error(f"Error loading state: {e}")
     
     def _get_last_assistant_message(self) -> str:
         ai_messages = [m for m in self.state["messages"] if isinstance(m, AIMessage)]
         return ai_messages[-1].content if ai_messages else ""
-    
-    def reset(self):
-        self.state = _empty_state()
-        if self.session_id and self.username:
-            path = self._get_state_path()
-            if path and path.exists():
-                path.unlink()
-    
-    def get_full_conversation(self) -> list:
-        """Return full conversation with payloads for frontend."""
-        return self.state.get("conversation_history", [])
-    
-    @property
-    def current_filters(self) -> dict:
-        return {
-            "query": self.state.get("retrieval_query"),
-            "brand": self.state.get("brand"),
-            "min_price": self.state.get("min_price"),
-            "max_price": self.state.get("max_price"),
-            "min_rating": self.state.get("min_rating"),
-        }
-    
-    @property
-    def last_results(self) -> list:
-        return self.state.get("search_results", [])
     
     def _build_payload(self) -> dict:
         state = self.state
@@ -279,6 +243,63 @@ class ChatRunner:
             "meta": meta,
         }
 
-
-def _slim_card(r: dict) -> dict:
-    return {k: r.get(k) for k in _CARD_FIELDS}
+    def chat(self, user_message: str) -> dict:
+        # Add user message to history
+        self.state["conversation_history"].append({
+            "role": "user",
+            "content": user_message,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        self.state = {
+            **self.state,
+            "messages": self.state["messages"] + [HumanMessage(content=user_message)],
+            "turn_count": self.state["turn_count"] + 1,
+        }
+        
+        self._save_state()
+        
+        result = self.graph.invoke(self.state.copy())
+        self.state = result
+        
+        payload = self._build_payload()
+        self.state = {**self.state, "response_payload": payload}
+        
+        # Store assistant message with payload
+        assistant_content = self._get_last_assistant_message()
+        self.state["conversation_history"].append({
+            "role": "assistant",
+            "content": assistant_content,
+            "payload": payload,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        self._save_state()
+        return payload
+    
+    def reset(self):
+        self.state = _empty_state()
+        
+        if self.session_id and self.username:
+            path = self._get_state_path()
+        
+            if path and path.exists():
+                path.unlink()
+    
+    def get_full_conversation(self) -> list:
+        """Return full conversation with payloads for frontend."""
+        return self.state.get("conversation_history", [])
+    
+    @property
+    def current_filters(self) -> dict:
+        return {
+            "query": self.state.get("retrieval_query"),
+            "brand": self.state.get("brand"),
+            "min_price": self.state.get("min_price"),
+            "max_price": self.state.get("max_price"),
+            "min_rating": self.state.get("min_rating"),
+        }
+    
+    @property
+    def last_results(self) -> list:
+        return self.state.get("search_results", [])

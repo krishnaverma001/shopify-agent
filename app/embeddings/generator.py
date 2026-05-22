@@ -1,17 +1,18 @@
-# app/embeddings/generator.py
-
 from typing import List, Dict, Tuple
 from sentence_transformers import SentenceTransformer
 from app.data.processors.data_cleaner import DataCleaner
 from app.config import settings
 from .models import EmbeddingPayload, ReviewEmbeddingPayload
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 class EmbeddingGenerator:
     """Generate embeddings for products"""
     
     def __init__(self, model_name: str = None):
         self.model_name = model_name or settings.EMBEDDING_MODEL
-        self.embedder = SentenceTransformer(settings.EMBEDDING_MODEL)
+        self.embedder = SentenceTransformer(self.model_name)
         self.cleaner = DataCleaner()
     
     def prepare_embedding_texts(self, products: List[Dict], variants: List[Dict]) -> Tuple[List[str], List[str]]:
@@ -125,7 +126,7 @@ class EmbeddingGenerator:
         """Generate embeddings for a list of texts"""
         batch_size = batch_size or settings.BATCH_SIZE
         
-        print(f"Generating embeddings for {len(texts)} texts...")
+        logger.info(f"Generating embeddings for {len(texts)} texts")
         
         embeddings = self.embedder.encode(
             texts,

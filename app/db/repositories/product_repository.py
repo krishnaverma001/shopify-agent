@@ -2,6 +2,10 @@ from typing import List, Dict
 from app.db.supabase_client import SupabaseClient
 from app.embeddings.models import EmbeddingPayload
 
+from app.logging import get_logger
+
+logger = get_logger(__name__)
+
 class ProductRepository:
     """Handle all product-related database operations"""
     
@@ -16,7 +20,7 @@ class ProductRepository:
         if not products:
             return
         
-        print(f"Upserting {len(products)} products...")
+        logger.info(f"Upserting {len(products)} products")
         
         # Upsert in batches to avoid timeout
         batch_size = 50
@@ -27,7 +31,7 @@ class ProductRepository:
                 on_conflict="handle"
             ).execute()
         
-        print(f"Products stored successfully")
+        logger.info(f"Products stored successfully")
     
     def upsert_variants(self, variants: List[Dict]) -> None:
         """
@@ -37,7 +41,7 @@ class ProductRepository:
         if not variants:
             return
         
-        print(f"Inserting {len(variants)} variants...")
+        logger.info(f"Inserting {len(variants)} variants")
         
         batch_size = 50
         
@@ -48,7 +52,7 @@ class ProductRepository:
                 on_conflict="variant_id"
             ).execute()
         
-        print(f"Variants stored successfully")
+        logger.info(f"Variants stored successfully")
     
     def upsert_product_embeddings(self, payloads: List[EmbeddingPayload]) -> None:
         """
@@ -58,7 +62,7 @@ class ProductRepository:
         if not payloads:
             return
         
-        print(f"Storing {len(payloads)} product embeddings...")
+        logger.info(f"Storing {len(payloads)} product embeddings...")
         
         # Convert payloads to dicts for insertion
         payload_dicts = [p.to_dict() for p in payloads]
@@ -71,7 +75,7 @@ class ProductRepository:
                 on_conflict="product_handle"
             ).execute()
         
-        print(f"Product embeddings stored successfully")
+        logger.info(f"Product embeddings stored successfully")
     
     def get_all_products(self) -> List[Dict]:
         """Fetch all products for embedding regeneration"""

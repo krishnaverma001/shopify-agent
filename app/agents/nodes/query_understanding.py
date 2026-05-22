@@ -34,6 +34,7 @@ def query_understanding_node(state: ConversationState) -> ConversationState:
     _init()
 
     action = state.get("next_action", "new_search")
+    
     messages = state.get("messages", [])
     raw_query = messages[-1].content if messages else state.get("raw_query", "")
 

@@ -18,3 +18,12 @@ class ChatResponse(BaseModel):
     detail: Optional[Dict] = None
     filters_applied: Optional[Dict] = None
     relaxations: Optional[list] = None
+
+class AuthRequest(BaseModel):
+    username: str
+    password: str
+
+class AuthResponse(BaseModel):
+    token: str
+    username: str
+    created: bool   # True if account was just created

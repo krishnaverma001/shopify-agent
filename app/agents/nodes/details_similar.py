@@ -1,15 +1,3 @@
-"""
-details_similar.py
-
-- details_node:  fetches full product info → stores in state["detail_product"]
-- similar_node:  fetches similar products  → stores in state["search_results"] + state["similar_products"]
-- general_respond_node: conversational fallback
-
-Neither details nor similar generates prose — the runner builds the JSON payload.
-The LLM is only used in general_respond_node.
-"""
-
-from __future__ import annotations
 import re
 import httpx
 from groq import Groq
@@ -17,6 +5,9 @@ from app.config import settings
 from app.retrieval.hybrid import HybridRetriever
 from app.agents.state import ConversationState
 from langchain_core.messages import AIMessage, HumanMessage
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 _CLIENT = None
 _HTTP_CLIENT = None
@@ -45,7 +36,7 @@ def _get_retriever() -> HybridRetriever:
     return HybridRetriever()
 
 
-# ── Position word → 0-based index ─────────────────────────────────────────────
+# Position word / 0-based index 
 _POSITION_MAP: dict[str, int] = {
     "first": 0, "1st": 0, "1": 0,
     "second": 1, "2nd": 1, "2": 1,
@@ -60,8 +51,7 @@ _POSITION_MAP: dict[str, int] = {
 }
 
 
-# ─── Product Details Node ──────────────────────────────────────────────────────
-
+# Product Details Node 
 def details_node(state: ConversationState) -> ConversationState:
     """
     Resolve which product the user means, fetch full details,
@@ -77,6 +67,7 @@ def details_node(state: ConversationState) -> ConversationState:
         )
     
     handle, resolved_index = _resolve_product_reference(state, results)
+
     if handle is None:
         if len(results) == 1:
             handle = results[0].get("product_handle")
@@ -131,7 +122,7 @@ def _shape_details(d: dict, index: int | None) -> dict:
     return {
         "product_handle":    d.get("product_handle"),
         "shopify_gid":       d.get("shopify_gid"),
-        "shopify_product_id": d.get("shopify_product_id"),
+        "shopify_product_id":d.get("shopify_product_id"),
         "title":             d.get("title"),
         "vendor":            d.get("vendor"),
         "price_range":       d.get("price_range"),
@@ -147,8 +138,6 @@ def _shape_details(d: dict, index: int | None) -> dict:
         "resolved_index":    index,           # which list position was selected (0-based)
     }
 
-
-# ─── Similar Products Node ─────────────────────────────────────────────────────
 
 def similar_node(state: ConversationState) -> ConversationState:
     """
@@ -190,8 +179,9 @@ def similar_node(state: ConversationState) -> ConversationState:
     source_title = source.get("title", "that item")
 
     similar_raw = _get_retriever().get_similar_products(product_handle=handle, limit=6)
+    
     if not similar_raw:
-        return _append_message(state, f"I couldn't find products similar to {source_title}.")
+        return _append_message(state, f"I couldn't find products similar to {source_title}")
 
     normalised = _normalise_similar(similar_raw)
 
@@ -211,7 +201,7 @@ def _normalise_similar(similar: list) -> list:
         {
             "product_handle":    p.get("product_handle"),
             "shopify_gid":       p.get("shopify_gid"),
-            "shopify_product_id": p.get("shopify_product_id"),
+            "shopify_product_id":p.get("shopify_product_id"),
             "title":             p.get("title"),
             "vendor":            p.get("vendor"),
             "min_price":         p.get("min_price"),
@@ -224,9 +214,6 @@ def _normalise_similar(similar: list) -> list:
         }
         for p in similar
     ]
-
-
-# ─── Reference resolver (shared by details, similar, compare) ─────────────────
 
 def _resolve_product_reference(
     state: ConversationState,
@@ -265,16 +252,21 @@ def _resolve_product_reference(
                 return handle, idx
         else:
             # Optional: log that user referenced beyond available results
-            print(f"[Reference] User requested index {idx+1} but only {len(results)} available")
+            logger.info(f"[Reference] User requested index {idx+1} but only {len(results)} available")
 
 
     # 3. Title-word fuzzy (skip very short / common words)
-    _STOPWORDS = {"the", "and", "for", "with", "this", "that", "from", "show", "tell", "more", "about"}
+    _STOPWORDS = {
+        "the", "and", "for", "with", "this", "that", "from", "show", "tell", 
+        "more", "about"
+    }
+    
     for i, r in enumerate(results):
         title_words = [
             w for w in (r.get("title") or "").lower().split()
             if len(w) > 3 and w not in _STOPWORDS
         ]
+    
         if any(w in raw for w in title_words):
             handle = r.get("product_handle")
             if handle:
@@ -282,17 +274,20 @@ def _resolve_product_reference(
 
     return None, None
 
-
-# ─── General Respond Node ──────────────────────────────────────────────────────
-
 def general_respond_node(state: ConversationState) -> ConversationState:
-    """Handle non-search messages — greetings, thanks, general questions."""
+    """Handle non-search messages like greetings, thanks, general questions."""
     
     # Check if supervisor gave a quick response (bypass LLM)
     if state.get("quick_response"):
         text = state["quick_response"]
+
         # Remove temp field so it doesn't persist
-        state = {k: v for k, v in state.items() if k != "quick_response"}
+        state = {
+            k: v 
+            for k, v in state.items() 
+            if k != "quick_response"
+        }
+        
         return {
             **state,
             "messages": state.get("messages", []) + [AIMessage(content=text)],
@@ -321,12 +316,10 @@ def general_respond_node(state: ConversationState) -> ConversationState:
         )
         text = response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[GeneralRespond] LLM error: {e}")
+        logger.error(f"LLM error: {e}")
         text = "How can I help you find something today?"
 
     return _append_message(state, text)
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _append_message(
     state: ConversationState,
@@ -336,6 +329,11 @@ def _append_message(
     updates: dict = {
         "messages": state.get("messages", []) + [AIMessage(content=text)],
     }
+
     if clear_detail:
         updates["detail_product"] = None
-    return {**state, **updates}
+
+    return {
+        **state, 
+        **updates
+    }

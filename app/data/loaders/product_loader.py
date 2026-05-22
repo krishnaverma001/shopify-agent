@@ -2,6 +2,9 @@ import pandas as pd
 import hashlib
 from typing import List, Dict, Tuple
 from app.data.processors.data_cleaner import DataCleaner
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 class ProductLoader:
     """Load and parse product data from CSV"""
@@ -14,7 +17,7 @@ class ProductLoader:
         Load products and variants from CSV
         Returns: (products_list, variants_list)
         """
-        print("Loading products from CSV...")
+        logger.info("Loading products from CSV")
         
         df = pd.read_csv(csv_path)
         grouped = df.groupby("Handle")
@@ -33,7 +36,7 @@ class ProductLoader:
             product_variants = self._create_variant_records(handle, group)
             variants.extend(product_variants)
         
-        print(f"Loaded {len(products)} products and {len(variants)} variants")
+        logger.info(f"Loaded {len(products)} products and {len(variants)} variants")
         return products, variants
     
     def _create_product_record(self, handle: str, first_row: pd.Series) -> Dict:

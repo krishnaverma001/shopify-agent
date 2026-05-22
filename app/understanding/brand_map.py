@@ -1,5 +1,5 @@
 from difflib import get_close_matches
-from typing import Optional, Dict, List
+from typing import Optional, List
 
 class BrandMapper:
     """Map fuzzy brand names to canonical brands"""

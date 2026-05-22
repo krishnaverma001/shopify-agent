@@ -1,3 +1,4 @@
+from app.logging import setup_logging, get_logger
 from app.data.loaders.product_loader import ProductLoader
 from app.data.loaders.review_loader import ReviewLoader
 from app.embeddings.generator import EmbeddingGenerator
@@ -13,6 +14,9 @@ import asyncio
 from pathlib import Path
 from typing import List, Dict
 
+logger = setup_logging()
+data_logger = get_logger(__name__)
+
 class DataPipeline:
     """Complete data pipeline for products and reviews"""
     
@@ -27,13 +31,13 @@ class DataPipeline:
     def _sync_shopify_ids(self, variants: List[Dict]):
         """Sync variants with Shopify to get real IDs"""
         
-        print("Syncing with Shopify to get real variant IDs...")
-        
+        data_logger.info("Syncing with Shopify to get real variant IDs")
+
         # Get variants that need syncing
         variants_to_sync = self.product_repo.get_variants_without_shopify_ids()
         
         if not variants_to_sync:
-            print("All variants already synced!")
+            data_logger.info("All variants already synced")
             return
         
         synced_count = 0
@@ -68,14 +72,16 @@ class DataPipeline:
                             )
                         
                         synced_count += 1
-                        print(f"Synced: {sku} -> {variant_id}")
-                        
+                        data_logger.debug(f"Synced: {sku} -> {variant_id}")
+
             except Exception as e:
-                print(f"Failed to sync SKU {sku}: {e}")
-        
-        print(f"Synced {synced_count}/{len(variants_to_sync)} variants")
-        
+                data_logger.error(f"Failed to sync SKU {sku}: {e}")
+
+        data_logger.info(f"Synced {synced_count}/{len(variants_to_sync)} variants")
+
     def run_product_pipeline(self, products_csv_path: str):
+        data_logger.info("Starting product pipeline")
+
         # Load from CSV
         products, variants = self.product_loader.load_products(products_csv_path)
         
@@ -97,15 +103,16 @@ class DataPipeline:
         synced_variants = len(self.product_repo.get_variants_without_shopify_ids())
         total_variants = len(variants)
         
-        print(f"Product pipeline complete!")
-        print(f"  - {len(products)} products")
-        print(f"  - {total_variants} variants total")
-        print(f"  - {total_variants - synced_variants} variants synced with Shopify")
-        print(f"  - {len(product_payloads)} embeddings\n")
+        data_logger.info(f"Product pipeline complete!")
+        data_logger.info(f"  - {len(products)} products")
+        data_logger.info(f"  - {total_variants} variants total")
+        data_logger.info(f"  - {total_variants - synced_variants} variants synced with Shopify")
+        data_logger.info(f"  - {len(product_payloads)} embeddings\n")
     
     def run_review_pipeline(self, reviews_csv_path: str):
         """Process reviews: load → store → embed"""
         
+        data_logger.info("Starting review pipeline")
         reviews = self.review_loader.load_reviews(reviews_csv_path)
         
         self.review_repo.upsert_reviews(reviews)
@@ -118,9 +125,9 @@ class DataPipeline:
         
         self.review_repo.upsert_review_embeddings(review_payloads)
         
-        print(f"\n✅ Review pipeline complete!")
-        print(f"{len(reviews)} reviews")
-        print(f"{len(review_payloads)} embeddings\n")
+        data_logger.info(f"Review pipeline complete")
+        data_logger.info(f"{len(reviews)} reviews")
+        data_logger.info(f"{len(review_payloads)} embeddings")
     
     def run_full_pipeline(self, products_csv_path: str, reviews_csv_path: str):
         """Run complete pipeline"""
@@ -131,7 +138,7 @@ class DataPipeline:
         load_catalog_metadata()
         self.run_review_pipeline(reviews_csv_path)
         
-        print("SEED DATA LOADED SUCCESSFULLY!")
+        data_logger.info("Seed Data loaded successfully")
         
 class SetupCommand:
     """One-command setup for new users"""
@@ -143,18 +150,18 @@ class SetupCommand:
         try:
             subprocess.run(["supabase", "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Supabase CLI not found. Skipping migrations.")
-            print("To install: https://supabase.com/docs/guides/local-development/cli")
+            data_logger.error("Supabase CLI not found. Skipping migrations")
+            data_logger.error("To install: https://supabase.com/docs/guides/local-development/cli")
             return
         
         # Check if supabase folder exists 
         if not Path("supabase").exists():
-            print("Supabase not initialized. Run 'supabase init' first.")
+            data_logger.error("Supabase not initialized. Run 'supabase init' first")
             return
         
         # Push migrations to remote
         try:
-            print("Pushing migrations to Supabase...")
+            data_logger.info("Pushing migrations to Supabase")
             result = subprocess.run(
                 ["supabase", "db", "push", "--yes"],
                 capture_output=True,
@@ -162,9 +169,9 @@ class SetupCommand:
             )
             
             if result.returncode == 0:
-                print(" Migrations applied successfully")
+                data_logger.info(" Migrations applied successfully")
             else:
-                print(f"Migration warning: {result.stderr[:200]}")
+                data_logger.error(f"Migration warning: {result.stderr[:200]}")
                 
         except Exception as e:
             print(f"Could not run migrations: {e}")
@@ -181,29 +188,30 @@ class SetupCommand:
             _ = settings.REVIEWS_CSV
             
             if not Path(settings.PRODUCTS_CSV).exists():
-                print(f"Warning: Products CSV not found at {settings.PRODUCTS_CSV}")
+                data_logger.error(f"Warning: Products CSV not found at {settings.PRODUCTS_CSV}")
             
             if not Path(settings.REVIEWS_CSV).exists():
-                print(f"Warning: Reviews CSV not found at {settings.REVIEWS_CSV}")
+                data_logger.error(f"Warning: Reviews CSV not found at {settings.REVIEWS_CSV}")
 
             return True
         
         except Exception as e:
-            print("Environment error:", e)
+            data_logger.error("Environment error:", e)
             return False
     
 def main():
     """Complete setup: migrations + data loading"""
     
-    print("Checking environment...")
+    data_logger.info("Checking environment")
+
     if not SetupCommand.check_environment():
-        print("Setup failed. Please fix .env file and try again.")
+        data_logger.error("Setup failed. Please fix .env file and try again.")
         sys.exit(1)
     
-    print("Running database migrations...")
+    data_logger.info("Running database migrations")
     SetupCommand.run_migrations()
     
-    print("Loading seed data...")
+    print("Loading seed data")
     pipeline = DataPipeline()
 
     pipeline.run_full_pipeline(
@@ -211,7 +219,7 @@ def main():
         reviews_csv_path=settings.REVIEWS_CSV
     )
     
-    print("SETUP COMPLETE! Your database is ready!")
+    data_logger.info("Setuo complete. Your database is ready")
 
 if __name__ == "__main__":
     main()

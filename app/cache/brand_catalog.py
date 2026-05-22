@@ -1,6 +1,7 @@
-# app/cache/brand_catalog.py
-
 from app.db.repositories.product_repository import ProductRepository
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 KNOWN_BRANDS = ['ADIDAS', 'ASICS TIGER', 'CONVERSE', 'DR MARTENS', 'FISHER PRICE', 
                 'FLEX FIT', 'HASBRO', 'HERSCHEL', 'LEGO', 'MATTEL', 'MEGA BLOCKS', 
@@ -16,4 +17,4 @@ def load_catalog_metadata():
     KNOWN_BRANDS.clear()
     KNOWN_BRANDS.extend(sorted(brands))
 
-    print("Catalog metadata loaded")
+    logger.info("Catalog metadata loaded")

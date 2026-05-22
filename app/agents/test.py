@@ -1,18 +1,17 @@
-"""
-Quick CLI to test the LangGraph shopping assistant.
-Run from project root:
-    python -m agent.test_cli
-"""
 from app.agents.runner import ChatRunner
 from app.agents.graph import get_graph
+import json
 from pprint import pprint
+from app.logging import get_logger, setup_logging
+
+setup_logging()
+logger = get_logger(__name__)
 
 def print_graph():
-    # Print Mermaid code (copy to https://www.mermaidflow.app/editor)
-    print("\n📊 Copy this to https://www.mermaidflow.app/editor\n")
+    logger.info("Copy this to https://www.mermaidflow.app/editor\n")
     
-    graph=get_graph()
-    print(graph.get_graph().draw_mermaid())
+    graph = get_graph()
+    logger.info(graph.get_graph().draw_mermaid())
     
     # Also print simple node list
     # print("NODES IN GRAPH:")
@@ -22,7 +21,7 @@ def print_graph():
 def main():
     runner = ChatRunner()
 
-    print("  Shopify Chat Assistant  (type 'quit' to exit, 'reset' to restart)")
+    logger.info("Shopify Chat Assistant  (type 'quit' to exit, 'reset' to restart)")
 
     # Optional: run a scripted scenario first
     # scenario = [
@@ -41,7 +40,6 @@ def main():
     #     print(f"  [Filters: {runner.current_filters}]")
     #     print()
 
-    print("\n[Interactive mode — type your own messages]\n")
     runner.reset()
 
     while True:
@@ -52,25 +50,26 @@ def main():
 
         if not user_input:
             continue
+
         if user_input.lower() == "quit":
             break
+        
         if user_input.lower() == "reset":
             runner.reset()
-            print("SYSTEM: Conversation reset.\n")
+            logger.info("SYSTEM: Conversation reset.\n")
+            
             continue
+
         if user_input.lower() == "filters":
-            print(f"SYSTEM: Active filters: {runner.current_filters}\n")
+            logger.info(f"SYSTEM: Active filters: \n{runner.current_filters}\n")
             continue
 
         reply = runner.chat(user_input)
-        # print(f"ASSISTANT: {reply}")
         
-        pprint(reply)
+        # pprint(reply)
+        logger.info(json.dumps(reply, indent=2))
 
-        # print(f"  [Filters: {runner.current_filters}]")
-
-        pprint(runner.current_filters)
-        print()
+        # pprint(runner.current_filters)
 
 
 if __name__ == "__main__":

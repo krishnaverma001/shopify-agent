@@ -1,21 +1,16 @@
-"""
-compare.py — Compare 2–3 products side-by-side.
-
-Triggered when supervisor detects a compare intent.
-Resolves product references from search_results (positional or name-based),
-then writes structured comparison data into state["comparison"].
-"""
-
 import re
 from app.agents.state import ConversationState
 from app.retrieval.hybrid import HybridRetriever
 from langchain_core.messages import HumanMessage, AIMessage
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 def _get_retriever() -> HybridRetriever:
     return HybridRetriever()
 
 
-# ── Position word → 0-based index ─────────────────────────────────────────────
+# Position word / 0-based index 
 _POSITION_MAP: dict[str, int] = {
     "first": 0, "1st": 0, "1": 0,
     "second": 1, "2nd": 1, "2": 1,
@@ -50,15 +45,17 @@ def compare_node(state: ConversationState) -> ConversationState:
     2. Fetch full details for each.
     3. Build a structured comparison dict and store it in state.
     """
+
     results = state.get("search_results", [])
+    
     if not results:
         return _append_message(
             state,
             "No products in context to compare. Try searching first.",
-            response_type="error",
         )
 
     # Capture the user message to detect "all"
+    
     messages = state.get("messages", [])
     latest_human = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
@@ -79,7 +76,6 @@ def compare_node(state: ConversationState) -> ConversationState:
         return _append_message(
             state,
             "I need at least two products to compare. Could you search for something first?",
-            response_type="error",
         )
 
     # Cap at 5 products for comparison (avoid token/payload bloat)
@@ -87,7 +83,7 @@ def compare_node(state: ConversationState) -> ConversationState:
     if len(handles) > 5:
         limit_message = f"I can only compare up to 5 products at once. Comparing the first 5."
         handles = handles[:5]
-        print(f"[Compare] Limiting comparison to first 5 products")
+        logger.info(f"Limiting comparison to first 5 products")
 
     # Fetch full details
     products = []
@@ -110,7 +106,6 @@ def compare_node(state: ConversationState) -> ConversationState:
         return _append_message(
             state,
             "I couldn't fetch enough product details to compare right now.",
-            response_type="error",
         )
 
     comparison = _build_comparison_table(products)
@@ -120,7 +115,7 @@ def compare_node(state: ConversationState) -> ConversationState:
         msg = limit_message
     elif "all" in latest_human.lower() or "both" in latest_human.lower():
         if len(products) == 5 and len(results) > 5:
-            msg = f"Comparing the top 5 products (limit reached). Say 'compare 1,2,3' for specific ones."
+            msg = f"Comparing the top 5 products (limit reached). Say 'compare 1, 2, 3' for specific ones."
         else:
             msg = f"Comparing all {len(products)} products for you."
     else:
@@ -131,11 +126,6 @@ def compare_node(state: ConversationState) -> ConversationState:
         "comparison": comparison,
         "messages": state.get("messages", []) + [AIMessage(content=msg)],
     }
-
-
-# ── Reference resolution ───────────────────────────────────────────────────────
-
-# compare.py - replace the _resolve_compare_references function
 
 def _resolve_compare_references(
     state: ConversationState, results: list
@@ -162,7 +152,7 @@ def _resolve_compare_references(
         if all_match:
             count = int(all_match.group(1))
             if count > 5:
-                print(f"[Compare] User requested {count} products, limiting to 5")
+                logger.info(f"User requested {count} products, limiting to 5")
             limit = min(count, len(results), 5)
         else:
             limit = min(len(results), 5)
@@ -175,9 +165,10 @@ def _resolve_compare_references(
 
         if len(handles) >= 2:
             if limit == 5 and len(results) > 5:
-                print(f"[Compare] User requested 'all' → comparing {len(handles)} products (capped at 5)")
+                logger.info(f"User requested 'all', comparing {len(handles)} products (capped at 5)")
             else:
-                print(f"[Compare] User requested 'all' → comparing {len(handles)} products")
+                logger.info(f"User requested 'all', comparing {len(handles)} products")
+            
             return handles
 
     handles: list[str] = []
@@ -198,8 +189,10 @@ def _resolve_compare_references(
     # 2. Bare numbers ("compare 1 and 3")
     for m in re.finditer(r"\b([1-9]|10)\b", raw):
         idx = int(m.group(1)) - 1
+        
         if 0 <= idx < len(results) and idx not in seen_indices:
             handle = results[idx].get("product_handle")
+            
             if handle:
                 handles.append(handle)
             seen_indices.add(idx)
@@ -210,10 +203,13 @@ def _resolve_compare_references(
     # 3. Title-word fuzzy match
     for result in results:
         title_words = [w for w in (result.get("title") or "").lower().split() if len(w) > 3]
+        
         if any(w in raw for w in title_words):
             h = result.get("product_handle")
+        
             if not h:
                 continue
+        
             if h not in handles:
                 handles.append(h)
 
@@ -226,9 +222,6 @@ def _resolve_compare_references(
         ]
 
     return handles
-
-
-# ── Comparison table builder ───────────────────────────────────────────────────
 
 def _build_comparison_table(products: list[dict]) -> dict:
     """
@@ -252,12 +245,14 @@ def _build_comparison_table(products: list[dict]) -> dict:
     # Best price (lowest min_price) - only if at least 2 products have prices
     prices = [p.get("min_price") for p in products]
     valid_prices = [(v, i) for i, v in enumerate(prices) if v is not None]
+    
     if len(valid_prices) >= 2:
         highlight["price"] = min(valid_prices, key=lambda x: x[0])[1]
 
     # Best rating (highest avg_rating) - only if at least 2 have ratings
     ratings = [p.get("avg_rating") for p in products]
     valid_ratings = [(v, i) for i, v in enumerate(ratings) if v is not None]
+    
     if len(valid_ratings) >= 2:
         highlight["rating"] = max(valid_ratings, key=lambda x: x[0])[1]
 
@@ -267,10 +262,9 @@ def _build_comparison_table(products: list[dict]) -> dict:
         "highlight": highlight,
     }
 
-# ── Product shaping ────────────────────────────────────────────────────────────
-
 def _slim_product(details: dict) -> dict:
     """Shape a full product-details dict into comparison-friendly form."""
+
     return {
         "product_handle":  details.get("product_handle"),
         "shopify_gid":     details.get("shopify_gid"),
@@ -288,6 +282,7 @@ def _slim_product(details: dict) -> dict:
 
 def _slim_from_result(r: dict) -> dict:
     """Shape a search-result dict (fewer fields) into comparison-friendly form."""
+
     return {
         "product_handle":  r.get("product_handle"),
         "shopify_gid":     r.get("shopify_gid"),
@@ -303,10 +298,9 @@ def _slim_from_result(r: dict) -> dict:
     }
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
-
 def _append_message(
-    state: ConversationState, text: str, response_type: str = "message"
+    state: ConversationState, 
+    text: str
 ) -> ConversationState:
     return {
         **state,

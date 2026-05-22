@@ -1,4 +1,7 @@
 from app.agents.state import ConversationState
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Price bump steps before dropping max_price entirely
 PRICE_BUMP_PCTS = [0.25, 0.50]  # 25% then 50%
@@ -9,6 +12,7 @@ def expander_node(state: ConversationState) -> ConversationState:
     Fully dumb executor — reads drop_field set by evaluator and acts on it.
     No logic of its own. No relaxation decisions.
     """
+    
     field = state.get("drop_field")
     relaxation_log = list(state.get("relaxation_log", []))
     
@@ -16,7 +20,7 @@ def expander_node(state: ConversationState) -> ConversationState:
     original_constraints = state.get("original_constraints", {})
     
     if not field:
-        print("[Expander] No drop_field set — nothing to do")
+        logger.info("No drop_field set — nothing to do")
         return state
 
     current_val = state.get(field)
@@ -24,12 +28,14 @@ def expander_node(state: ConversationState) -> ConversationState:
     # Special case: max_price gets stepped up before being dropped
     if field == "max_price" and current_val is not None:
         # Count how many price expansions we've done in THIS search session
+        
         price_expansions = sum(
             1 for e in relaxation_log 
             if e.startswith("Expanded budget") or e.startswith("Expanded your maximum budget")
         )
         
         # Store original user budget if not already saved
+        
         if "original_max_price" not in original_constraints:
             original_constraints["original_max_price"] = current_val
         
@@ -40,13 +46,14 @@ def expander_node(state: ConversationState) -> ConversationState:
             new_max = round(original_budget * (1 + pct), 2)
             
             # User-friendly message with emoji for visibility
+        
             if price_expansions == 0:
                 msg = f"Expanded your budget from ${original_budget:.0f} to ${new_max:.0f} to find more options"
             else:
                 msg = f"Further expanded budget to ${new_max:.0f} (originally ${original_budget:.0f})"
             
             relaxation_log.append(msg)
-            print(f"[Expander] {msg}")
+            logger.info(f"Expander Message: {msg}")
             
             return {
                 **state, 
@@ -57,9 +64,10 @@ def expander_node(state: ConversationState) -> ConversationState:
             }
 
         # All bumps done — drop it
-        msg = f"Removed price limit entirely (was ${original_budget:.0f}) - showing all prices"
+        msg = f"Removed price limit entirely (was ${original_budget:.2f}) - showing all prices"
         relaxation_log.append(msg)
-        print(f"[Expander] Dropping max_price")
+
+        logger.info("Dropping max_price")
         
         return {
             **state, 
@@ -73,7 +81,8 @@ def expander_node(state: ConversationState) -> ConversationState:
     if field == "min_price" and current_val is not None:
         msg = f"Removed minimum price requirement (was ${current_val:.0f}+) to show more products"
         relaxation_log.append(msg)
-        print(f"[Expander] {msg}")
+        logger.info(f"Expander message: {msg}")
+
         return {
             **state, 
             "min_price": None, 
@@ -94,19 +103,6 @@ def expander_node(state: ConversationState) -> ConversationState:
         "drop_field": None,
     }
 
-
-def _estimate_original_max(current_max: float, bumps_done: int) -> float:
-    """Calculate original budget before expansions."""
-    if bumps_done == 0:
-        return current_max
-    elif bumps_done == 1:
-        # After 1 expansion: new = original * 1.25, so original = new / 1.25
-        return current_max / 1.25
-    else:
-        # After 2 expansions: new = original * 1.50, so original = new / 1.50
-        return current_max / 1.50
-
-
 def _log_message(field: str, value) -> str:
     """Safely format log message for any value type with user-friendly formatting."""
     
@@ -117,7 +113,7 @@ def _log_message(field: str, value) -> str:
     # Handle different field types with emojis for visual distinction
     if field == "min_rating":
         try:
-            return f"Removed minimum rating filter (was ≥{float(value):.1f} stars)"
+            return f"Removed minimum rating filter (was ≥ {float(value):.1f} stars)"
         except (TypeError, ValueError):
             return f"Removed minimum rating filter (was {value})"
     
@@ -155,4 +151,5 @@ def _log_message(field: str, value) -> str:
     # category is intentionally excluded from the agent filter flow
     
     # Default fallback
+    
     return f"Relaxed {field} filter (was: {value}) to help find results"

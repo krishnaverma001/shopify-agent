@@ -1,12 +1,13 @@
 from pprint import pprint
-from app.config import settings
 
 from .normalizer import QueryNormalizer
 from .parser import LLMQueryParser
 from .validator import QueryValidator
 from .models import ParsedQuery
+from app.config import settings
 
 from app.retrieval.hybrid import HybridRetriever
+
 from app.cache.brand_catalog import KNOWN_BRANDS
 
 def build_vector_query(parsed):
@@ -19,7 +20,7 @@ def build_vector_query(parsed):
     return " ".join([p for p in parts if p]).strip()
 
 def main():
-    print("Initializing...\n")
+    print("Initializing\n")
 
     normalizer = QueryNormalizer()
 
@@ -84,7 +85,7 @@ def main():
             min_price=parsed.min_price,
             max_price=parsed.max_price,
             min_rating=parsed.min_rating,
-            limit=5
+            limit=1
         )
 
         pprint(results)
@@ -94,7 +95,7 @@ def main():
 
             similar = retriever.get_similar_products(
                 product_handle=top_product['product_handle'],
-                limit=3
+                limit=1
             )
 
             print("\n[SIMILAR PRODUCTS]")

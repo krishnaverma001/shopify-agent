@@ -1,6 +1,10 @@
-from typing import List, Optional
-from app.understanding.models import ParsedQuery, Intent
+from typing import List
+from app.understanding.models import ParsedQuery
+
 from app.understanding.brand_map import BrandMapper
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 class QueryValidator:
     """Validate and map extracted data from LLM"""
@@ -12,14 +16,6 @@ class QueryValidator:
         """Validate and clean extracted data"""
         
         errors = []
-        
-        # Validate Intent 
-        intent = extracted.get("intent", "search")
-        if intent in [i.value for i in Intent]:
-            parsed.intent = Intent(intent)
-        else:
-            parsed.intent = Intent.SEARCH
-            errors.append(f"Unknown intent '{intent}', defaulting to search")
         
         # Validate Clean Query 
         retrieval_query = extracted.get("retrieval_query", "")
@@ -60,7 +56,10 @@ class QueryValidator:
                 errors.append(f"Invalid max price: {max_price}")
         
         # Fix swapped min/max
-        if parsed.min_price is not None and parsed.max_price is not None and parsed.min_price > parsed.max_price:
+        if (parsed.min_price is not None 
+            and parsed.max_price is not None 
+            and parsed.min_price > parsed.max_price
+        ):
             errors.append(f"Min price (${parsed.min_price}) > max price (${parsed.max_price}), swapping")
             parsed.min_price, parsed.max_price = parsed.max_price, parsed.min_price
         
@@ -95,6 +94,11 @@ class QueryValidator:
         parsed.validation_errors = errors
         
         if errors:
-            print(f"Validation errors: {errors}")
-        
+            formatted = "\n  - ".join(errors)
+
+            logger.info(
+                f"Validation issues:\n"
+                f"  - {formatted}"
+            )
+            
         return parsed

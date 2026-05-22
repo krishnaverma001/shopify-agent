@@ -4,7 +4,12 @@ import httpx
 from groq import Groq
 from app.config import settings
 from app.agents.state import ConversationState
+from app.logging import get_logger
 
+logger = get_logger(__name__)
+
+from app.retrieval.hybrid import HybridRetriever
+retriever = HybridRetriever()
 
 _CLIENT = None
 _HTTP_CLIENT = None
@@ -28,6 +33,7 @@ def _get_client() -> Groq:
         )
     
     return _CLIENT
+
 
 
 SYSTEM_PROMPT = """You are a supervisor for a shopping assistant.
@@ -61,20 +67,55 @@ Rules:
 def supervisor_node(state: ConversationState) -> ConversationState:
     """Classify entry intent only. Never routes expand or clarify."""
 
-    # ── NEW: Reset/cancel detection (HIGHEST priority) ──
+    # Reset/cancel detection (HIGHEST priority) 
     latest_message = state.get("messages", [])[-1].content if state.get("messages") else ""
     msg_lower = latest_message.lower().strip()
-    
-    reset_keywords = [
-        "leave it", "forget it", "never mind", "nevermind", 
-        "cancel", "stop", "ignore", "skip it", "skip this",
-        "don't worry", "never mind that", "forget that",
-        "scratch that", "reset", "clear", "start over",
-        "abort", "dump it", "drop it", "whatever"
+
+    logger.info(f"Processing message: '{latest_message[:100]}'")
+
+    # Only trigger on EXACT phrases that mean abandon the search
+    reset_phrases = [
+        "forget it",
+        "forget that", 
+        "never mind",  # keep this but with boundary check
+        "cancel",
+        "stop",
+        "ignore that",
+        "scratch that",
+        "start over",
+        "reset search",
+        "clear search"
     ]
     
-    if any(keyword in msg_lower for keyword in reset_keywords):
-        print(f"[Supervisor] Reset detected: '{latest_message}' → resetting state")
+    # Check for EXACT phrase or phrase with punctuation only
+    is_reset = False
+    for phrase in reset_phrases:
+        # Match phrase as whole word sequence
+        pattern = r'\b' + r'\s+'.join(re.escape(word) for word in phrase.split()) + r'\b'
+        if re.search(pattern, msg_lower):
+            is_reset = True
+            break
+    
+    false_positive_patterns = [
+        r"don't\s+worry\s+about",      # "don't worry about X"
+        r"never\s+mind\s+the\s+",      # "never mind the price/brand/color"
+        r"never\s+mind\s+that\s+",      # "never mind that constraint"
+        r"forget\s+about\s+the\s+",     # "forget about the budget"
+        r"ignore\s+the\s+",              # "ignore the previous filter"
+        r"skip\s+that\s+(?:one|item|product)",  # "skip that product"
+        r"just\s+stop\s+showing\s+",     # "stop showing expensive ones"
+        r"cancel\s+the\s+(?:filter|constraint)",  # "cancel the filter"
+    ]
+
+    # If any false positive pattern matches, NOT a reset
+    for pattern in false_positive_patterns:
+        if re.search(pattern, msg_lower):
+            logger.info(f"False positive prevented: pattern '{pattern}' matched")
+            is_reset = False
+            break
+    
+    if is_reset:
+        logger.info(f"Reset detected: '{latest_message}'")
         return {
             **state,
             "next_action": "reset",
@@ -84,7 +125,7 @@ def supervisor_node(state: ConversationState) -> ConversationState:
             "pending_clarification_field": None,
         }
 
-    # ── NEW: Quick general chat detection (bypass LLM) ──
+    # Quick general chat detection (bypass LLM) 
     quick_chat_keywords = {
         "hi": "Hello! What can I help you find today?",
         "hello": "Hi there! Looking for something specific?",
@@ -100,16 +141,16 @@ def supervisor_node(state: ConversationState) -> ConversationState:
     }
     
     if msg_lower in quick_chat_keywords:
-        print(f"[Supervisor] Quick chat exact match for '{msg_lower}'")
+        logger.info(f"Quick chat exact match for '{msg_lower}'")
         return {
             **state,
             "next_action": "respond",
             "quick_response": quick_chat_keywords[msg_lower],
         }
         
-    # ── Fast-path: answering a clarifying question ────────────────────────────
+    # Fast-path: answering a clarifying question 
     if state.get("awaiting_user_response"):
-        print("[Supervisor] → refine (answering clarification)")
+        logger.info("Calling Refine (answering clarification)")
         
         # NEW: Apply the clarification answer as a filter
         user_response = state.get("messages", [])[-1].content if state.get("messages") else ""
@@ -124,18 +165,20 @@ def supervisor_node(state: ConversationState) -> ConversationState:
             if price_match:
                 price = float(price_match.group(1))
                 updated_state["max_price"] = price
-                print(f"[Supervisor] Applied price filter: ≤${price}")
+                
+                logger.info(f"Applied price filter: ≤ ${price}")
+            
             elif "under" in user_response.lower() or "less than" in user_response.lower():
                 price_match = re.search(r'(\d+(?:\.\d+)?)', user_response)
                 if price_match:
                     price = float(price_match.group(1))
                     updated_state["max_price"] = price
-                    print(f"[Supervisor] Applied price filter: ≤${price}")
+                    logger.info(f"Applied price filter: ≤ ${price}")
         
         elif pending_field == "brand" and user_response:
             updated_state["brand"] = user_response.strip()
             updated_state["brand_was_explicit"] = True
-            print(f"[Supervisor] Applied brand filter: {user_response}")
+            logger.info(f"Applied brand filter: {user_response}")
         
         elif pending_field == "rating" and user_response:
             
@@ -143,7 +186,7 @@ def supervisor_node(state: ConversationState) -> ConversationState:
             if rating_match:
                 rating = float(rating_match.group(1))
                 updated_state["min_rating"] = rating
-                print(f"[Supervisor] Applied rating filter: ≥{rating}")
+                logger.info(f"Applied rating filter: ≥ {rating}")
         
         # Reset clarification flags
         return {
@@ -153,14 +196,24 @@ def supervisor_node(state: ConversationState) -> ConversationState:
             "needs_clarification": False,
             "relaxation_budget": 3,
             "clarification_question": None,
-            "pending_clarification_field": None,  # NEW: clear
+            "pending_clarification_field": None,
         }
 
     has_results = bool(state.get("search_results"))
     latest_message = state.get("messages", [])[-1].content if state.get("messages") else ""
 
+    if has_results:
+        is_pos_ref, pos_action = _is_positional_reference(latest_message)
+        if is_pos_ref:
+            logger.info(f"Positional reference detected -> {pos_action} (bypassing LLM)")
+            return {
+                **state,
+                "next_action": pos_action,
+            }
+    
+    # Then topic change check
     if has_results and _is_topic_change(state, latest_message):
-        print("[Supervisor] Topic change detected → forcing new_search")
+        logger.info("Topic change detected -> forcing new_search")
         return {
             **state,
             "next_action": "new_search",
@@ -192,14 +245,23 @@ Current search context:
 - Currently visible products (what the user can see and refer to):
 {visible_list}
 
-Classify the latest user message."""
+Classify the latest user message"""
+
+    
+    logger.info(f"Sending to LLM for classification")
 
     try:
         response = _get_client().chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
+                {
+                    "role": "system", 
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user", 
+                    "content": user_prompt
+                },
             ],
             temperature=0.0,
             max_tokens=100,
@@ -209,27 +271,15 @@ Classify the latest user message."""
 
         # Hard guard — supervisor must never emit these
         if action in ("expand", "clarify"):
-            print(f"[Supervisor] Blocked illegal action '{action}' → defaulting")
+            logger.info(f"Blocked illegal action '{action}' → defaulting")
             action = "refine" if has_results else "new_search"
 
     except Exception as e:
-        print(f"[Supervisor] LLM error: {e}, defaulting to new_search")
+        logger.error(f"LLM error: {e}, defaulting to new_search")
         action = "new_search"
 
-    print(f"[Supervisor] → {action}")
-
-    # Clear stale comparison when user starts a new search or refinement
-    # BUT don't clear if this is a positional reference that should preserve context
-    def _is_positional_reference(msg: str) -> bool:
-        
-        patterns = [r"\bfirst\b", r"\bsecond\b", r"\bthird\b", r"\b1st\b", r"\b2nd\b", r"\b3rd\b", 
-                    r"\bthat one\b", r"\bit\b", r"\bdetails\b", r"\binfo\b"]
-        return any(re.search(p, msg.lower()) for p in patterns)
-
-    is_pos_ref = _is_positional_reference(latest_message)
-
     # Only clear stale data if it's a true new search/refine (not a positional reference)
-    clear_stale = action in ("new_search", "refine") and not is_pos_ref
+    clear_stale = action in ("new_search", "refine") 
 
     return {
         **state,
@@ -239,6 +289,8 @@ Classify the latest user message."""
 
 
 def _build_visible_list(state: ConversationState) -> str:
+    """Builds list of product details from state"""
+    
     results = state.get("search_results", [])
     if not results:
         return "  (none)"
@@ -248,58 +300,129 @@ def _build_visible_list(state: ConversationState) -> str:
         lines.append(f"  {i}. {r.get('title', 'Unknown')} — {price}")
     return "\n".join(lines)
 
+def _is_positional_reference(msg: str) -> tuple:
+    """Returns (is_positional, suggested_action)"""
+    msg_lower = msg.lower()
+
+    if any(word in msg_lower for word in ["compare", "vs", "versus", "difference", "side by side"]):
+        return True, "compare"
+    
+    position_patterns = [
+        r"\bfirst\b", r"\b1st\b", r"\b#1\b", r"\b1\b",  
+        r"\bsecond\b", r"\b2nd\b", r"\b#2\b", r"\b2\b", 
+        r"\bthird\b", r"\b3rd\b", r"\b#3\b", r"\b3\b",
+        r"\bfourth\b", r"\b4th\b", r"\b#4\b", r"\b4\b",
+        r"\bfifth\b", r"\b5th\b", r"\b#5\b", r"\b5\b",
+        r"\bthat one\b", r"\bthis one\b",
+        r"\bthe (\w+) one\b"
+    ]
+    
+    if any(re.search(p, msg_lower) for p in position_patterns):
+        # Determine which action
+        if any(word in msg_lower for word in ["details", "info", "tell me about", "more about", "about"]):
+            return True, "details"
+        elif any(word in msg_lower for word in ["similar", "like this", "more like", "find more like"]):
+            return True, "similar"
+        elif any(word in msg_lower for word in ["compare", "vs", "versus", "difference"]):
+            return True, "compare"
+        else:
+            # Default to details for bare "first one", "that one"
+            return True, "details"
+    
+    return False, None
+    
+# def _is_topic_change(state: ConversationState, user_message: str) -> bool:
+#     """Detect if user is asking about a completely different product category."""
+    
+#     old_query = state.get("retrieval_query", "")
+#     if not old_query:
+#         return False
+
+    
+#     msg = user_message.lower().strip()
+
+#     # Never flag topic change on short replies (clarification answers like "yes", "sure", "no")
+#     if len(msg.split()) <= 4:
+#         return False
+
+#     # Never flag when message contains similarity/detail/comparison intent words
+#     context_ref_patterns = [
+#         r"\bfirst\b", r"\b1st\b", r"\b#?1\b",
+#         r"\bsecond\b", r"\b2nd\b", r"\b#?2\b",
+#         r"\bthird\b", r"\b3rd\b", r"\b#?3\b",
+#         r"\bfourth\b", r"\b4th\b", r"\b#?4\b",
+#         r"\bfifth\b", r"\b5th\b", r"\b#?5\b",
+#         r"\bthat one\b", r"\bthis one\b", r"\bthis\b", r"\bit\b",
+#         r"\bdetails\b", r"\binfo\b", r"\binformation\b",
+#         r"\bsimilar\b", r"\blike this\b", r"\blike it\b", r"\blike that\b",
+#         r"\bcompare\b", r"\bvs\b", r"\bversus\b",
+#     ]
+#     for pattern in context_ref_patterns:
+#         if re.search(pattern, msg):
+#             print(f"[TopicChange] Context reference detected → NOT a topic change")
+#             return False
+
+#     # Explicit reset signals only
+#     new_search_indicators = [
+#         "actually", "instead", "forget that", "never mind",
+#         "what about", "looking for", "need a", "search for",
+#     ]
+#     if any(indicator in msg for indicator in new_search_indicators):
+#         return True
+
+#     # Word overlap check — only fire if queries are both substantive AND share nothing
+#     STOPWORDS = {"a", "an", "the", "for", "with", "any", "some", "are", "is",
+#                  "to", "of", "in", "on", "and", "or", "me", "my", "i", "can",
+#                  "you", "show", "find", "get", "want", "do", "have"}
+#     old_words = set(old_query.lower().split()) - STOPWORDS
+#     new_words = set(msg.split()) - STOPWORDS
+
+#     if not old_words or not new_words:
+#         return False
+
+#     if not old_words.intersection(new_words) and len(old_words) > 2 and len(new_words) > 2:
+#         return True
+
+#     return False
+
 def _is_topic_change(state: ConversationState, user_message: str) -> bool:
-    """Detect if user is asking about a completely different product category."""
+    """Detect topic change using embedding similarity from HybridRetriever."""
+    
     old_query = state.get("retrieval_query", "")
     if not old_query:
         return False
-
     
-    msg = user_message.lower().strip()
-
-    # Never flag topic change on short replies (clarification answers like "yes", "sure", "no")
-    if len(msg.split()) <= 4:
+    # Short messages are refinements, not topic changes
+    if len(user_message.split()) <= 4:
         return False
-
-    # Never flag when message contains similarity/detail/comparison intent words
-    context_ref_patterns = [
-        r"\bfirst\b", r"\b1st\b", r"\b#?1\b",
-        r"\bsecond\b", r"\b2nd\b", r"\b#?2\b",
-        r"\bthird\b", r"\b3rd\b", r"\b#?3\b",
-        r"\bfourth\b", r"\b4th\b", r"\b#?4\b",
-        r"\bfifth\b", r"\b5th\b", r"\b#?5\b",
-        r"\bthat one\b", r"\bthis one\b", r"\bthis\b", r"\bit\b",
-        r"\bdetails\b", r"\binfo\b", r"\binformation\b",
-        r"\bsimilar\b", r"\blike this\b", r"\blike it\b", r"\blike that\b",
-        r"\bcompare\b", r"\bvs\b", r"\bversus\b",
-    ]
-    for pattern in context_ref_patterns:
-        if re.search(pattern, msg):
-            print(f"[TopicChange] Context reference detected → NOT a topic change")
-            return False
-
-    # Explicit reset signals only
-    new_search_indicators = [
-        "actually", "instead", "forget that", "never mind",
-        "what about", "looking for", "need a", "search for",
-    ]
-    if any(indicator in msg for indicator in new_search_indicators):
-        return True
-
-    # Word overlap check — only fire if queries are both substantive AND share nothing
-    STOPWORDS = {"a", "an", "the", "for", "with", "any", "some", "are", "is",
-                 "to", "of", "in", "on", "and", "or", "me", "my", "i", "can",
-                 "you", "show", "find", "get", "want", "do", "have"}
-    old_words = set(old_query.lower().split()) - STOPWORDS
-    new_words = set(msg.split()) - STOPWORDS
-
-    if not old_words or not new_words:
+    
+    # Refinement keywords - definitely not topic change
+    refinement_keywords = ['cheaper', 'expensive', 'better', 'worse', 'higher', 'lower', 
+                          'under', 'over', 'less than', 'more than', 'rating', 'brand',
+                          'cheap', 'affordable', 'premium', 'budget', 'filter']
+    if any(kw in user_message.lower() for kw in refinement_keywords):
         return False
-
-    if not old_words.intersection(new_words) and len(old_words) > 2 and len(new_words) > 2:
-        return True
-
-    return False
-
+    
+    embedder = retriever.embedder
+    
+    # Compute embeddings on demand (no caching to state)
+    old_embedding = embedder.encode([old_query])[0]
+    new_embedding = embedder.encode([user_message])[0]
+    
+    # Calculate cosine similarity
+    import numpy as np
+    similarity = float(np.dot(old_embedding, new_embedding) / 
+                      (np.linalg.norm(old_embedding) * np.linalg.norm(new_embedding)))
+    
+    logger.info(f"Similarity = {similarity:.3f} | '{old_query}' → '{user_message[:50]}'")
+    
+    # Decision thresholds
+    if similarity >= 0.65:
+        return False  # Same topic
+    elif similarity < 0.45:
+        return True   # Topic change
+    else:
+        return False  # Ambiguous - let LLM decide
+    
 def route_after_supervisor(state: ConversationState) -> str:
     return state["next_action"]

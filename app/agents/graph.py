@@ -76,7 +76,6 @@ def build_graph():
 
 _graph = None
 
-
 def get_graph():
     global _graph
     if _graph is None:

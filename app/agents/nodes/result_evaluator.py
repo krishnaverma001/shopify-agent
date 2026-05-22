@@ -1,6 +1,7 @@
-# result_evaluator.py - modified version
-
 from app.agents.state import ConversationState
+from app.logging import get_logger
+
+logger = get_logger(__name__)
 
 MIN_STABLE_RESULTS = 2
 MAX_RESULTS = 10
@@ -15,8 +16,6 @@ RELAXATION_ORDER = [
     "max_price",
     "brand",
 ]
-
-# result_evaluator.py - modify the "too many results" section
 
 def result_evaluator_node(state: ConversationState) -> ConversationState:
     """
@@ -33,17 +32,25 @@ def result_evaluator_node(state: ConversationState) -> ConversationState:
     
     # If we've attempted relaxation and still have 0 results
     if n == 0 and attempts > 1 and budget <= 0:
-        print(f"[Evaluator] No results after full relaxation → no_results fallback")
-        return {**state, "next_action": "no_results", "drop_field": None}
+        logger.info(f"No results after full relaxation -> no_results fallback")
+        return {
+            **state, 
+            "next_action": "no_results", 
+            "drop_field": None
+        }
     
     # If all constraints are gone and still 0 results
     if n == 0 and active_constraints == 0 and attempts >= 2:
         print(f"[Evaluator] No constraints, still no results → no_results")
-        return {**state, "next_action": "no_results", "drop_field": None}
+        return {
+            **state, 
+            "next_action": "no_results", 
+            "drop_field": None
+        }
     
-    # ── Too many results → NEW: show top 5 rated products instead of clarifying ──
+    # Too many results → NEW: show top 5 rated products instead of clarifying 
     if n > MAX_RESULTS:
-        print(f"[Evaluator] {n} results (too many) → showing top 5 rated products")
+        logger.info(f"{n} results (too many) -> showing top 5 rated products")
         
         # Sort by rating and take top 5
         sorted_results = sorted(
@@ -66,18 +73,27 @@ def result_evaluator_node(state: ConversationState) -> ConversationState:
             "drop_field": None,
         }
     
-    # ── Zero results → always expand/clarify ──────────────────────
+    # Zero results = always expand/clarify 
     if n == 0:
         if budget <= 0:
-            print(f"[Evaluator] Budget exhausted → no_results fallback")
-            return {**state, "next_action": "no_results", "drop_field": None}
+            logger.info("Budget exhausted -> no_results fallback")
+            return {
+                **state, 
+                "next_action": "no_results", 
+                "drop_field": None
+            }
 
         field = _pick_drop_field(state)
         if field is None:
-            print("[Evaluator] Nothing left to relax → no_results")
-            return {**state, "next_action": "no_results", "drop_field": None}
+            logger.info("Nothing left to relax -> no_results")
+            return {
+                **state, 
+                "next_action": "no_results", 
+                "drop_field": None
+            }
 
-        print(f"[Evaluator] 0 results, budget={budget} → expand '{field}'")
+        logger.info(f"0 results, budget = {budget} -> expand '{field}'")
+        
         return {
             **state,
             "next_action": "expand",
@@ -85,15 +101,21 @@ def result_evaluator_node(state: ConversationState) -> ConversationState:
             "relaxation_budget": budget - 1,
         }
 
-    # ── 1 result with active constraints → expand ─────────────────
+    # 1 result with active constraints = expand
+
     if n == 1 and active_constraints > 0:
         if budget <= 0:
-            print(f"[Evaluator] 1 result but budget exhausted → respond anyway")
-            return {**state, "next_action": "respond", "drop_field": None}
+            logger.info(f"1 result but budget exhausted -> respond anyway")
+
+            return {
+                **state, 
+                "next_action": "respond", 
+                "drop_field": None
+            }
         
         field = _pick_drop_field(state)
         if field:
-            print(f"[Evaluator] 1 result with {active_constraints} constraints → expand '{field}'")
+            logger.info(f"1 result with {active_constraints} constraints -> expand '{field}'")
             return {
                 **state,
                 "next_action": "expand",
@@ -101,9 +123,13 @@ def result_evaluator_node(state: ConversationState) -> ConversationState:
                 "relaxation_budget": budget - 1,
             }
 
-    # ── 2+ results → respond ──────────────────────────────────────
-    print(f"[Evaluator] {n} results (active constraints: {active_constraints}) → respond")
-    return {**state, "next_action": "respond", "drop_field": None}
+    # 2+ results = respond 
+    logger.info(f"{n} results (active constraints: {active_constraints}) -> respond")
+    return {
+        **state, 
+        "next_action": "respond", 
+        "drop_field": None
+    }
 
 def _count_active_constraints(state: ConversationState) -> int:
     """Count how many non-default filters are active."""
