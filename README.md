@@ -331,3 +331,9 @@ python -m app.agents.test
 | **Resilience** | No retry on Groq API failures | Single timeout kills entire conversation | Add circuit breaker + fallback responses |
 | **Memory Bloat** | `conversation_history` stores full payloads for every turn | Long sessions consume excessive memory | Summarize old turns; store only last N messages |
 
+## Demo
+
+[![Shopify Ecommerce Bot Demo](https://img.youtube.com/vi/P25l_sFNFN4/maxresdefault.jpg)](https://youtu.be/P25l_sFNFN4)
+
+## Deployment (Hugging Face) [![Live Demo](https://img.shields.io/badge/Live-Demo-green)](https://krishnaverma01-shopbot.hf.space/)
+https://krishnaverma01-shopbot.hf.space/
