@@ -3,6 +3,7 @@ venv/
 __pycache__/
 .vscode/
 chat_sessions/
-supabase/
+supabase/.temp
+supabase/config.toml
 chat_sessions/
 *.pyc
