@@ -305,6 +305,7 @@ GET  /api/session/{id}/full # Get full conversation history
 
 ```
 python -m app.agents.test
+# For testing of product link through frontend, if asked for shopify store password use 'admin' 
 ```
 
 ## Critical Agent Issues (V1 → V2 Improvements)
