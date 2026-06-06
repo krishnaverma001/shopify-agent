@@ -301,6 +301,467 @@ PATCH /api/session/{id}/title  # Rename session
 GET  /api/session/{id}/full # Get full conversation history
 ```
 
+## System Architecture
+
+```mermaid
+flowchart TB
+
+%% 1. SETUP
+
+subgraph SETUP["1. SETUP PHASE"]
+
+A["Clone GitHub Repository"]
+
+A --> B["Create .env<br/>SUPABASE_URL<br/>GROQ_API_KEY<br/>SHOPIFY_ACCESS_TOKEN"]
+
+B --> C["pip install -r requirements.txt"]
+
+C --> D["Install Supabase CLI"]
+
+D --> E["supabase link project"]
+
+E --> F["supabase db push<br/>Apply migrations"]
+
+F --> G["Validate environment<br/>CSV paths"]
+
+G --> H["Place products.csv<br/>reviews.csv"]
+
+H --> I["python -m app.seed"]
+
+end
+
+
+
+%% CSV
+
+
+subgraph CSV["1A. CSV INPUT"]
+
+direction LR
+
+CSV1["products.csv<br/><br/>Handle<br/>Title<br/>Body HTML<br/>Vendor<br/>Variants<br/>SKU<br/>Price<br/>Tags"]
+
+CSV2["reviews.csv<br/><br/>product_handle<br/>rating<br/>title<br/>body<br/>verified"]
+
+end
+
+
+
+%% SEEDING
+
+subgraph SEED["2. DATABASE SEEDING"]
+
+
+I --> S1["seed.py main()"]
+
+S1 --> S2["check_environment()"]
+
+S2 --> S3["Create DataPipeline()"]
+
+S3 --> S4["run_full_pipeline()"]
+
+
+
+
+subgraph PRODUCT["2A. PRODUCT PIPELINE"]
+
+
+S4 --> P1["run_product_pipeline()"]
+
+
+P1 --> P2["ProductLoader.load_products()"]
+
+
+P2 --> P3["Parse CSV"]
+
+P3 --> P4["Group by Handle"]
+
+
+P4 --> P5["Product Objects"]
+
+P4 --> P6["Variant Objects"]
+
+
+
+P5 --> P7["ProductRepository"]
+
+P6 --> P8["ProductRepository"]
+
+
+
+P7 --> P9["upsert_products()"]
+
+P8 --> P10["upsert_variants()"]
+
+
+
+P10 --> P11["_sync_shopify_ids()"]
+
+
+P11 --> P12["ShopifyFetcher"]
+
+
+P12 --> P13["Shopify GraphQL API<br/>Search SKU"]
+
+
+P13 --> P14["Update product_id<br/>Update variant_id"]
+
+
+
+P14 --> P15["EmbeddingGenerator"]
+
+
+P15 --> P16["Prepare embedding text"]
+
+
+P16 --> P17["all-MiniLM-L6-v2"]
+
+
+P17 --> P18["Create vectors"]
+
+
+P18 --> P19["product_embeddings"]
+
+
+end
+
+
+
+
+
+subgraph REVIEW["2B. REVIEW PIPELINE"]
+
+
+S4 --> R1["run_review_pipeline()"]
+
+
+R1 --> R2["ReviewLoader.load_reviews()"]
+
+
+R2 --> R3["ReviewRepository"]
+
+
+R3 --> R4["reviews table"]
+
+
+R4 --> R5["Prepare review text"]
+
+
+R5 --> R6["Generate embeddings"]
+
+
+R6 --> R7["review_embeddings"]
+
+
+end
+
+
+
+
+
+subgraph CACHE["2C. CACHE WARMUP"]
+
+
+S4 --> C1["load_catalog_metadata()"]
+
+C1 --> C2["Brand/category memory cache"]
+
+end
+
+
+
+P19 --> READY["Seed Complete"]
+
+R7 --> READY
+
+C2 --> READY
+
+
+end
+
+
+
+%% DATABASE
+
+
+subgraph DATABASE["3. SUPABASE DATABASE"]
+
+
+READY --> DB["Supabase"]
+
+
+DB --> T1[("products")]
+
+DB --> T2[("product_variants")]
+
+DB --> T3[("reviews")]
+
+DB --> T4[("product_embeddings<br/>pgvector")]
+
+DB --> T5[("review_embeddings")]
+
+
+
+DB --> RPC["SQL RPC FUNCTIONS"]
+
+
+RPC --> RPC1["match_products()"]
+
+RPC --> RPC2["keyword_search_products()"]
+
+RPC --> RPC3["get_similar_products()"]
+
+
+end
+
+
+
+%% FASTAPI
+
+subgraph API["4. FASTAPI SERVER"]
+
+
+API0["uvicorn app.main:app"]
+
+
+API0 --> API1["FastAPI Application"]
+
+
+API1 --> DB
+
+
+API1 --> AUTH["JWT Auth"]
+
+
+AUTH --> JWT["Access Token"]
+
+
+
+JWT --> SESSION["Session Manager"]
+
+
+SESSION --> STORE["Session Storage"]
+
+
+
+STORE --> ENDPOINT["API Routes<br/><br/>login<br/>session<br/>chat<br/>history"]
+
+
+end
+
+
+
+%% USER
+
+subgraph USER["5. USER FLOW"]
+
+
+ENDPOINT --> U1["Login"]
+
+U1 --> U2["Receive JWT"]
+
+
+U2 --> U3["Create Session"]
+
+
+U3 --> U4["Send Chat Message"]
+
+
+end
+
+
+%% LANGGRAPH
+
+subgraph AGENT["6. LANGGRAPH AGENT"]
+
+
+
+U4 --> A1["Supervisor Node"]
+
+
+A1 --> A2{"Intent Router"}
+
+
+
+A2 -->|search/refine| Q1["Query Understanding"]
+
+Q1 --> Q2["Normalize Query"]
+
+
+Q2 --> Q3["LLM Extract Filters"]
+
+
+Q3 --> Q4["Validate Filters"]
+
+
+Q4 --> Q5["Build Retrieval Query"]
+
+
+
+Q5 --> RET["Hybrid Retriever"]
+
+
+
+
+
+subgraph RETRIEVAL["RETRIEVAL"]
+
+
+
+RET --> E1["Query Embedding"]
+
+
+E1 --> V1["Vector Search<br/>match_products()"]
+
+
+RET --> K1["Keyword Search<br/>keyword_search_products()"]
+
+
+
+V1 --> RRF["RRF Fusion"]
+
+K1 --> RRF
+
+
+
+RRF --> FILTER["Apply Filters"]
+
+
+FILTER --> PRICE["Variant price enrichment"]
+
+
+PRICE --> REV["Fetch Reviews"]
+
+
+REV --> SCORE["Review Ranking"]
+
+
+SCORE --> FINAL["Final Results"]
+
+
+
+end
+
+
+
+
+
+FINAL --> EVA["Result Evaluator"]
+
+
+EVA --> DEC{"Decision"}
+
+
+
+DEC -->|No Results| EXP["Expand Constraints"]
+
+
+EXP --> Q5
+
+
+
+DEC -->|Too Many| CLAR["Clarifier"]
+
+
+CLAR --> U4
+
+
+
+DEC -->|Good| RESP["Responder LLM"]
+
+
+
+
+
+
+A2 -->|details| DETAIL["Details Node"]
+
+A2 -->|similar| SIM["Similar Products"]
+
+A2 -->|compare| COMP["Compare Products"]
+
+A2 -->|general| GEN["General Response"]
+
+A2 -->|reset| RESET["Reset"]
+
+
+DETAIL --> RESP
+
+SIM --> RESP
+
+COMP --> RESP
+
+GEN --> RESP
+
+RESET --> RESP
+
+
+end
+
+
+
+%% RESPONSE
+
+subgraph OUTPUT["7. RESPONSE"]
+
+
+RESP --> JSON["ChatResponse JSON"]
+
+
+JSON --> TYPE{"Response Type"}
+
+
+TYPE --> O1["Products"]
+
+TYPE --> O2["Comparison"]
+
+TYPE --> O3["Details"]
+
+TYPE --> O4["Clarification"]
+
+TYPE --> O5["Message"]
+
+
+
+O1 --> FRONT["Frontend"]
+
+O2 --> FRONT
+
+O3 --> FRONT
+
+O4 --> FRONT
+
+O5 --> FRONT
+
+
+
+FRONT --> USER2["User"]
+
+USER2 --> U4
+
+
+end
+
+
+
+%% GLOBAL
+
+
+CSV --> SEED
+
+SETUP --> SEED
+
+SEED --> DATABASE
+
+DATABASE --> API
+
+API --> USER
+
+USER --> AGENT
+
+AGENT --> OUTPUT
+```
+
 ## Testing
 
 ```
