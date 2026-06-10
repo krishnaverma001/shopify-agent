@@ -1,9 +1,9 @@
-# app/shopify/fetcher.py
-
 import httpx
 from typing import Optional, Tuple
 from app.config import settings
+from  app.logging import get_logger
 
+logger = get_logger(__name__)
 
 class ShopifyFetcher:
     """Fetch Shopify IDs for products and variants"""
@@ -17,6 +17,13 @@ class ShopifyFetcher:
         self,
         sku: str
     ) -> Tuple[Optional[str], Optional[int], Optional[str], Optional[int]]:
+        """
+        It queries Shopify's GraphQL Admin API using a product's SKU (from your CSV) 
+        to retrieve the real Shopify product ID, variant ID, and GID strings, 
+        then updates your Supabase database so you can generate direct product links 
+        and enable future features like add-to-cart – it's essentially a one-time 
+        sync that bridges your offline CSV data with Shopify's live system
+        """
 
         if not sku:
             return (None, None, None, None)
@@ -54,11 +61,6 @@ class ShopifyFetcher:
                 }
             )
 
-            # print("\n======================")
-            # print("SKU:", sku)
-            # print("STATUS:", response.status_code)
-            # print("BODY:", response.text[:500])
-
             if response.status_code != 200:
                 return (None, None, None, None)
 
@@ -66,7 +68,7 @@ class ShopifyFetcher:
 
             errors = data.get("errors")
             if errors:
-                print("GRAPHQL ERRORS:", errors)
+                logger.error("GRAPHQL ERRORS:", errors)
                 return (None, None, None, None)
 
             edges = (
@@ -76,7 +78,7 @@ class ShopifyFetcher:
             )
 
             if not edges:
-                print("No Shopify variant found")
+                logger.error("No Shopify variant found")
                 return (None, None, None, None)
 
             variant_node = edges[0]["node"]
@@ -89,9 +91,9 @@ class ShopifyFetcher:
             product_gid = product_node["id"]
             product_id = int(product_gid.split("/")[-1])
 
-            return (
-                product_gid,
-                product_id,
-                variant_gid,
-                variant_id
-            )
+        return (
+            product_gid,    # "gid://shopify/Product/987654321"
+            product_id,     # 987654321
+            variant_gid,    # "gid://shopify/ProductVariant/123456789"
+            variant_id      # 123456789
+        )
